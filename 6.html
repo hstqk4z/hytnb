@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>液态相机 · Liquid Cam</title>
+<style>
+:root{
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+  --accent: #FFD60A;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{
+  height:100%;overflow:hidden;background:#000;color:#fff;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  -webkit-user-select:none;user-select:none;overscroll-behavior:none;touch-action:none;
+}
+
+/* ================= 预览舞台 ================= */
+#stage{position:fixed;inset:0;overflow:hidden;background:#000;}
+#video{
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;transform-origin:center center;
+  will-change:transform;transition:filter .2s ease;
+}
+#vignette{
+  position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at center, rgba(0,0,0,0) 46%, rgba(0,0,0,.42) 100%);
+  opacity:.6;
+}
+#grid{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .3s;}
+#grid.on{opacity:1;}
+#grid span{position:absolute;background:rgba(255,255,255,.26);}
+#grid .v{top:0;bottom:0;width:1px;}
+#grid .v1{left:33.333%;} #grid .v2{left:66.666%;}
+#grid .h{left:0;right:0;height:1px;}
+#grid .h1{top:33.333%;} #grid .h2{top:66.666%;}
+
+/* 录制指示 */
+#recordBadge{
+  position:absolute;top:calc(var(--safe-t) + 18px);left:50%;transform:translateX(-50%);
+  display:none;align-items:center;gap:7px;z-index:25;
+  padding:6px 14px;border-radius:999px;
+  background:rgba(0,0,0,.5);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.14);
+  font-size:12.5px;font-weight:600;letter-spacing:1px;font-variant-numeric:tabular-nums;
+}
+#recordBadge.show{display:flex;}
+.rec-dot{
+  width:8px;height:8px;border-radius:50%;background:#FF3B30;
+  animation:blink 1s ease-in-out infinite;
+}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.25;}}
+
+/* ================= 液态玻璃基础 ================= */
+.glass{
+  position:relative;overflow:hidden;
+  background:linear-gradient(145deg, rgba(255,255,255,.22) 0%, rgba(255,255,255,.08) 48%, rgba(255,255,255,.04) 100%);
+  -webkit-backdrop-filter:blur(22px) saturate(180%);
+  backdrop-filter:blur(22px) saturate(180%);
+  border:1px solid rgba(255,255,255,.24);
+  box-shadow:
+    0 10px 30px rgba(0,0,0,.40),
+    inset 0 1px 0 rgba(255,255,255,.50),
+    inset 0 -1px 1px rgba(255,255,255,.08);
+}
+
+/* ================= 顶栏 ================= */
+.topbar{
+  position:absolute;top:calc(var(--safe-t) + 12px);left:0;right:0;
+  display:flex;justify-content:space-between;align-items:center;
+  padding:0 18px;z-index:22;pointer-events:none;
+}
+.topbar .group{display:flex;gap:12px;pointer-events:auto;}
+.icon-btn{
+  width:44px;height:44px;border-radius:50%;
+  display:grid;place-items:center;cursor:pointer;
+  background:rgba(28,28,30,.55);
+  -webkit-backdrop-filter:blur(18px) saturate(180%);
+  backdrop-filter:blur(18px) saturate(180%);
+  border:1px solid rgba(255,255,255,.14);
+  color:#fff;
+  transition:transform .18s cubic-bezier(.34,1.56,.64,1), background .2s;
+}
+.icon-btn:active{transform:scale(.88);}
+.icon-btn svg{width:21px;height:21px;fill:none;stroke:#fff;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}
+.icon-btn.on{
+  background:rgba(255,214,10,.92);
+  border-color:rgba(255,255,255,.6);
+}
+.icon-btn.on svg{stroke:#1c1c1e;}
+.icon-btn.disabled{opacity:.32;pointer-events:none;}
+
+/* ================= 变焦滑轨 ================= */
+#zoomRail{
+  position:absolute;right:14px;top:50%;transform:translateY(-50%);
+  z-index:21;display:flex;flex-direction:column;align-items:center;gap:10px;
+}
+#zoomTrack{
+  position:relative;width:38px;height:172px;border-radius:19px;
+  background:rgba(28,28,30,.42);
+  -webkit-backdrop-filter:blur(18px) saturate(160%);
+  backdrop-filter:blur(18px) saturate(160%);
+  border:1px solid rgba(255,255,255,.16);
+  touch-action:none;cursor:pointer;
+}
+#zoomTrack .tick{
+  position:absolute;left:8px;right:8px;height:1px;
+  background:rgba(255,255,255,.22);pointer-events:none;
+}
+#zoomThumb{
+  position:absolute;left:50%;bottom:0;
+  width:28px;height:28px;border-radius:50%;
+  transform:translate(-50%,50%);
+  background:radial-gradient(circle at 32% 28%, #ffffff, #dcdcdc 58%, #b9b9b9 100%);
+  box-shadow:0 3px 10px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.5);
+  transition:bottom .04s linear;
+}
+#zoomLabel{
+  font-size:11.5px;font-weight:600;letter-spacing:.4px;
+  padding:4px 10px;border-radius:999px;
+  background:rgba(28,28,30,.55);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.14);
+  min-width:48px;text-align:center;font-variant-numeric:tabular-nums;
+}
+
+/* ================= 底栏 ================= */
+#bottomBar{
+  position:absolute;left:0;right:0;bottom:0;z-index:20;
+  padding-bottom:calc(var(--safe-b) + 6px);
+  background:linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.38) 32%, rgba(0,0,0,.80) 100%);
+  pointer-events:none;
+}
+#bottomBar > *{pointer-events:auto;}
+
+/* 滤镜条 */
+#filterStrip{
+  display:flex;gap:8px;overflow-x:auto;padding:12px 18px 2px;
+  scrollbar-width:none;-webkit-overflow-scrolling:touch;
+}
+#filterStrip::-webkit-scrollbar{display:none;}
+.filter-chip{
+  flex:0 0 auto;padding:7px 15px;border-radius:999px;
+  font-size:12px;letter-spacing:.5px;color:rgba(255,255,255,.80);
+  background:rgba(28,28,30,.48);
+  -webkit-backdrop-filter:blur(16px) saturate(160%);
+  backdrop-filter:blur(16px) saturate(160%);
+  border:1px solid rgba(255,255,255,.12);
+  transition:all .22s cubic-bezier(.4,0,.2,1);
+  cursor:pointer;white-space:nowrap;
+}
+.filter-chip.active{
+  background:#fff;color:#000;font-weight:700;border-color:#fff;
+}
+
+/* 变焦快捷 */
+#zoomPills{display:flex;justify-content:center;gap:8px;padding:10px 0 2px;}
+.zoom-pill{
+  min-width:40px;height:31px;padding:0 11px;border-radius:16px;
+  background:rgba(28,28,30,.52);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.12);
+  color:#fff;font-size:11.5px;font-weight:600;letter-spacing:.4px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:all .2s;font-variant-numeric:tabular-nums;
+}
+.zoom-pill.active{background:#fff;color:#000;border-color:#fff;}
+
+/* 控制行 */
+.controls{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 30px 0;
+}
+.side-btn{
+  width:52px;height:52px;border-radius:50%;
+  display:grid;place-items:center;cursor:pointer;
+  background:rgba(28,28,30,.48);
+  -webkit-backdrop-filter:blur(16px) saturate(170%);
+  backdrop-filter:blur(16px) saturate(170%);
+  border:1px solid rgba(255,255,255,.12);
+  transition:transform .18s cubic-bezier(.34,1.56,.64,1);
+  background-size:cover;background-position:center;
+}
+.side-btn:active{transform:scale(.88);}
+.side-btn svg{width:23px;height:23px;fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+
+#shutter{
+  width:76px;height:76px;border-radius:50%;
+  border:4px solid #fff;background:transparent;
+  display:grid;place-items:center;cursor:pointer;padding:0;
+  transition:transform .12s cubic-bezier(.34,1.56,.64,1);
+}
+#shutter:active{transform:scale(.93);}
+#shutter .inner{
+  width:60px;height:60px;border-radius:50%;background:#fff;
+  transition:all .28s cubic-bezier(.34,1.56,.64,1);
+}
+#shutter.video-mode .inner{background:#FF3B30;}
+#shutter.recording .inner{width:30px;height:30px;border-radius:7px;background:#FF3B30;}
+
+/* 模式行 */
+#modeRow{display:flex;justify-content:center;gap:28px;padding:10px 0 2px;}
+.mode-btn{
+  background:none;border:none;color:rgba(255,255,255,.52);
+  font-size:12px;font-weight:600;letter-spacing:1.6px;padding:6px 6px;cursor:pointer;
+  transition:color .2s;
+}
+.mode-btn.active{color:var(--accent);}
+.mode-btn.disabled{opacity:.3;pointer-events:none;}
+
+/* 快门闪光 */
+#flashFx{
+  position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;
+  z-index:60;transition:opacity .45s ease-out;
+}
+#flashFx.fire{opacity:.92;transition:none;}
+
+/* ================= 权限层 ================= */
+#permLayer{
+  position:fixed;inset:0;z-index:90;display:none;place-items:center;
+  background:rgba(0,0,0,.86);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  padding:24px;
+}
+#permLayer.show{display:grid;}
+.perm-card{
+  width:min(86vw,340px);padding:30px 24px;border-radius:26px;text-align:center;
+}
+.perm-card p{font-size:14px;line-height:1.7;color:rgba(255,255,255,.85);margin-bottom:20px;letter-spacing:.5px;}
+.perm-card button{
+  width:100%;padding:13px;border-radius:999px;font-size:15px;font-weight:600;
+  letter-spacing:1px;color:#fff;cursor:pointer;
+  background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28);
+}
+.perm-card button:active{transform:scale(.97);}
+
+/* ================= 设置面板 ================= */
+#settingsOverlay{
+  position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.42);
+  -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
+  opacity:0;visibility:hidden;transition:.3s;
+}
+#settingsOverlay.show{opacity:1;visibility:visible;}
+
+#settingsPanel{
+  position:fixed;left:0;right:0;bottom:0;z-index:50;
+  padding:10px 22px calc(var(--safe-b) + 26px);
+  border-radius:32px 32px 0 0;
+  border-bottom:none;
+  transform:translateY(105%);
+  transition:transform .42s cubic-bezier(.32,.72,0,1);
+  max-height:84vh;overflow-y:auto;
+}
+#settingsPanel.show{transform:translateY(0);}
+.panel-handle{
+  width:40px;height:5px;border-radius:99px;background:rgba(255,255,255,.28);
+  margin:4px auto 18px;
+}
+.panel-title{font-size:19px;font-weight:700;letter-spacing:1px;margin-bottom:18px;padding-left:4px;}
+.setting-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;border-radius:18px;margin-bottom:9px;
+  background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.09);
+}
+.setting-title{font-size:14.5px;font-weight:500;letter-spacing:.4px;}
+.setting-sub{font-size:11px;color:rgba(255,255,255,.42);margin-top:3px;letter-spacing:.3px;}
+
+.switch{position:relative;display:inline-block;width:50px;height:30px;flex:0 0 auto;}
+.switch input{opacity:0;width:0;height:0;}
+.switch span{
+  position:absolute;inset:0;border-radius:99px;cursor:pointer;
+  background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.12);
+  transition:.3s;
+}
+.switch span::before{
+  content:'';position:absolute;width:24px;height:24px;border-radius:50%;
+  left:2px;top:2px;background:#fff;
+  box-shadow:0 2px 6px rgba(0,0,0,.4);
+  transition:.3s cubic-bezier(.34,1.56,.64,1);
+}
+.switch input:checked + span{background:linear-gradient(135deg,#34C759,#30D158);border-color:rgba(255,255,255,.3);}
+.switch input:checked + span::before{transform:translateX(20px);}
+
+.about{
+  margin-top:18px;padding:22px 20px;border-radius:22px;
+  background:linear-gradient(145deg, rgba(255,255,255,.09), rgba(255,255,255,.03));
+  border:1px solid rgba(255,255,255,.10);
+  text-align:center;
+}
+.about-title{font-size:11px;letter-spacing:4px;color:rgba(255,255,255,.38);margin-bottom:14px;text-transform:uppercase;}
+.about-app{font-size:17px;font-weight:700;letter-spacing:2px;margin-bottom:5px;}
+.about-ver{font-size:11px;color:rgba(255,255,255,.40);letter-spacing:1px;margin-bottom:16px;}
+.about-divider{height:1px;background:rgba(255,255,255,.10);margin:0 auto 16px;width:58%;}
+.about-author{font-size:13.5px;letter-spacing:1px;color:rgba(255,255,255,.78);line-height:1.9;}
+.about-author b{color:#7dd3fc;font-weight:600;text-shadow:0 0 18px rgba(125,211,252,.45);}
+
+/* ================= 查看器 ================= */
+#mediaViewer{
+  position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.96);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:20px;opacity:0;visibility:hidden;transition:.3s;padding:20px;
+}
+#mediaViewer.show{opacity:1;visibility:visible;}
+#photoImg,#videoPlayer{max-width:100%;max-height:70vh;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.8);}
+.viewer-actions{display:flex;gap:14px;}
+.viewer-btn{
+  padding:12px 26px;border-radius:999px;font-size:14px;letter-spacing:1px;
+  cursor:pointer;color:#fff;text-decoration:none;
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);
+}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="video" playsinline autoplay muted></video>
+  <div id="vignette"></div>
+  <div id="grid">
+    <span class="v v1"></span><span class="v v2"></span>
+    <span class="h h1"></span><span class="h h2"></span>
+  </div>
+  <div id="recordBadge"><span class="rec-dot"></span><span id="recTime">00:00</span></div>
+</div>
+
+<div class="topbar">
+  <div class="group">
+    <button id="flashBtn" class="icon-btn disabled" aria-label="闪光灯">
+      <svg viewBox="0 0 24 24"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"/></svg>
+    </button>
+  </div>
+  <div class="group">
+    <button id="settingsBtn" class="icon-btn" aria-label="设置">
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3.2"/>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 0 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 0 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.55V3a2 2 0 0 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 0 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<div id="zoomRail">
+  <div id="zoomTrack"><div id="zoomThumb"></div></div>
+  <div id="zoomLabel">1.0×</div>
+</div>
+
+<div id="bottomBar">
+  <div id="filterStrip"></div>
+  <div id="zoomPills"></div>
+  <div class="controls">
+    <button id="thumbBtn" class="side-btn" aria-label="相册">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.5" cy="10" r="1.6"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/></svg>
+    </button>
+    <button id="shutter" aria-label="快门"><span class="inner"></span></button>
+    <button id="switchBtn" class="side-btn" aria-label="切换镜头">
+      <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14-4.5L4 9"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14 4.5L20 15"/><path d="M20 20v-5h-5"/></svg>
+    </button>
+  </div>
+  <div id="modeRow">
+    <button class="mode-btn active" data-mode="photo">照片</button>
+    <button class="mode-btn" data-mode="video">视频</button>
+  </div>
+</div>
+
+<div id="flashFx"></div>
+
+<!-- 权限提示 -->
+<div id="permLayer">
+  <div class="perm-card glass">
+    <p id="permMsg">正在启动相机…</p>
+    <button id="retryBtn">重新尝试</button>
+  </div>
+</div>
+
+<!-- 设置遮罩 -->
+<div id="settingsOverlay"></div>
+
+<!-- 设置面板 -->
+<div id="settingsPanel" class="glass">
+  <div class="panel-handle"></div>
+  <div class="panel-title">设置</div>
+
+  <div class="setting-row">
+    <div>
+      <div class="setting-title">电子防抖</div>
+      <div class="setting-sub">EIS 运动补偿 · 手持拍摄更稳</div>
+    </div>
+    <label class="switch"><input type="checkbox" id="eisToggle" checked><span></span></label>
+  </div>
+
+  <div class="setting-row">
+    <div>
+      <div class="setting-title">网格线</div>
+      <div class="setting-sub">三分法构图辅助</div>
+    </div>
+    <label class="switch"><input type="checkbox" id="gridToggle"><span></span></label>
+  </div>
+
+  <div class="setting-row">
+    <div>
+      <div class="setting-title">前置镜像</div>
+      <div class="setting-sub">自拍画面水平翻转</div>
+    </div>
+    <label class="switch"><input type="checkbox" id="mirrorToggle"><span></span></label>
+  </div>
+
+  <div class="setting-row">
+    <div>
+      <div class="setting-title">录制麦克风</div>
+      <div class="setting-sub">视频录制时收录环境声音</div>
+    </div>
+    <label class="switch"><input type="checkbox" id="micToggle" checked><span></span></label>
+  </div>
+
+  <div class="setting-row">
+    <div>
+      <div class="setting-title">拍照音效</div>
+      <div class="setting-sub">快门声与录制提示音</div>
+    </div>
+    <label class="switch"><input type="checkbox" id="soundToggle" checked><span></span></label>
+  </div>
+
+  <div class="about">
+    <div class="about-title">About</div>
+    <div class="about-app">液态相机 Liquid Cam</div>
+    <div class="about-ver">VERSION 2.0.0</div>
+    <div class="about-divider"></div>
+    <div class="about-author">
+      作者 · Author<br>
+      <b>不会飞的avata360</b> &amp; <b>mini3</b>
+    </div>
+  </div>
+</div>
+
+<!-- 媒体查看器 -->
+<div id="mediaViewer">
+  <img id="photoImg" alt="照片" style="display:none;">
+  <video id="videoPlayer" controls playsinline style="display:none;"></video>
+  <div class="viewer-actions">
+    <a id="downloadLink" class="viewer-btn" download="liquidcam.jpg">保存</a>
+    <button id="closeViewer" class="viewer-btn">关闭</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* =========================================================
+     元素引用
+     ========================================================= */
+  const $ = id => document.getElementById(id);
+  const videoEl      = $('video');
+  const flashBtn     = $('flashBtn');
+  const settingsBtn  = $('settingsBtn');
+  const shutterBtn   = $('shutter');
+  const switchBtn    = $('switchBtn');
+  const thumbBtn     = $('thumbBtn');
+  const filterStrip  = $('filterStrip');
+  const zoomPills    = $('zoomPills');
+  const zoomTrack    = $('zoomTrack');
+  const zoomThumb    = $('zoomThumb');
+  const zoomLabel    = $('zoomLabel');
+  const recordBadge  = $('recordBadge');
+  const recTime      = $('recTime');
+  const settingsPanel   = $('settingsPanel');
+  const settingsOverlay = $('settingsOverlay');
+  const eisToggle    = $('eisToggle');
+  const gridToggle   = $('gridToggle');
+  const mirrorToggle = $('mirrorToggle');
+  const micToggle    = $('micToggle');
+  const soundToggle  = $('soundToggle');
+  const gridEl       = $('grid');
+  const flashFx      = $('flashFx');
+  const permLayer    = $('permLayer');
+  const permMsg      = $('permMsg');
+  const retryBtn     = $('retryBtn');
+  const mediaViewer  = $('mediaViewer');
+  const photoImg     = $('photoImg');
+  const videoPlayer  = $('videoPlayer');
+  const closeViewer  = $('closeViewer');
+  const downloadLink = $('downloadLink');
+
+  /* =========================================================
+     滤镜配置
+     ========================================================= */
+  const FILTERS = [
+    { name: '原图', css: 'none' },
+    { name: '鲜明', css: 'saturate(1.45) contrast(1.12) brightness(1.03)' },
+    { name: '柔和', css: 'saturate(0.85) contrast(0.95) brightness(1.08)' },
+    { name: '黑白', css: 'grayscale(1) contrast(1.18) brightness(1.02)' },
+    { name: '胶片', css: 'sepia(0.28) contrast(1.18) saturate(1.15) brightness(0.98)' },
+    { name: '复古', css: 'sepia(0.62) contrast(1.05) saturate(0.88) brightness(1.05)' },
+    { name: '冷调', css: 'hue-rotate(-12deg) saturate(1.22) contrast(1.06) brightness(1.02)' },
+    { name: '暖阳', css: 'sepia(0.22) saturate(1.32) hue-rotate(8deg) brightness(1.07)' },
+    { name: '夜色', css: 'brightness(1.16) contrast(1.22) saturate(1.3) hue-rotate(-8deg)' },
+    { name: '褪色', css: 'saturate(0.55) contrast(0.9) brightness(1.12)' },
+    { name: '赛博', css: 'hue-rotate(-25deg) saturate(1.9) contrast(1.25) brightness(1.05)' }
+  ];
+
+  /* =========================================================
+     全局状态
+     ========================================================= */
+  const state = {
+    facing: 'environment',
+    mode: 'photo',
+    torch: false,
+    torchSupported: false,
+    eis: true,
+    mirror: false,
+    mic: true,
+    sound: true,
+    filterIndex: 0,
+    zoomT: 0,
+    softwareScale: 1,
+    displayZoom: 1,
+    eisDx: 0,
+    eisDy: 0,
+    running: false,
+    recording: false,
+    recCanvas: null,
+    recCtx: null,
+    recRaf: 0,
+    recTimer: 0,
+    recStart: 0
+  };
+
+  let stream = null;
+  let videoTrack = null;
+  let zoomRange = { min: 1, max: 5, hw: false };
+  let audioStream = null;
+  let recorder = null;
+  let recordedChunks = [];
+  let lastMedia = null;   // { type, url, blob }
+  let currentPhotoURL = null;
+
+  const canRecord = !!(window.MediaRecorder && HTMLCanvasElement.prototype.captureStream);
+
+  /* =========================================================
+     音效合成（Web Audio，无需外部文件）
+     ========================================================= */
+  let audioCtx = null;
+  function ac() {
+    if (!state.sound) return null;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    return audioCtx;
+  }
+
+  function noiseClick(ctx, when, freq, dur, vol) {
+    const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = freq;
+    bp.Q.value = 1.0;
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    src.connect(bp).connect(g).connect(ctx.destination);
+    src.start(when);
+  }
+
+  // 快门：机械"咔嚓"双击
+  function playShutter() {
+    const ctx = ac(); if (!ctx) return;
+    const t = ctx.currentTime;
+    noiseClick(ctx, t, 5200, 0.030, 0.50);
+    noiseClick(ctx, t + 0.048, 3000, 0.055, 0.34);
+  }
+
+  function playBeep(freqs, dur) {
+    const ctx = ac(); if (!ctx) return;
+    const t = ctx.currentTime;
+    freqs.forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = f;
+      const st = t + i * dur * 0.85;
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.linearRampToValueAtTime(0.16, st + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + dur);
+      o.connect(g).connect(ctx.destination);
+      o.start(st);
+      o.stop(st + dur + 0.03);
+    });
+  }
+  function playRecStart() { playBeep([880, 1318.5], 0.085); }
+  function playRecStop()  { playBeep([1174.7, 784], 0.095); }
+
+  /* =========================================================
+     主摄选择：避开长焦 / 超广角
+     ========================================================= */
+  async function resolveMainDeviceId(facing) {
+    if (facing !== 'environment') return null;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput' && d.label);
+      if (!cams.length) return null;
+
+      const backCams = cams.filter(d => /back|rear|后置|背面|environment/i.test(d.label));
+      const pool = backCams.length ? backCams : cams;
+
+      const exclude = /tele|telephoto|长焦|望远|ultra[\s-]?wide|超广角|超广|periscope|潜望|macro|微距|depth|景深|红外|ir[ _-]?camera/i;
+      const main = pool.find(d => !exclude.test(d.label));
+      return main ? main.deviceId : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /* =========================================================
+     摄像头启动
+     ========================================================= */
+  function stopCurrentStream() {
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    videoTrack = null;
+    resetEIS();
+  }
+
+  async function startCamera(facing) {
+    permLayer.classList.remove('show');
+    try {
+      stopCurrentStream();
+
+      const deviceId = await resolveMainDeviceId(facing);
+      const videoConstraints = {
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 }
+      };
+      if (deviceId) videoConstraints.deviceId = { exact: deviceId };
+      else videoConstraints.facingMode = { ideal: facing };
+
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+      videoEl.srcObject = stream;
+      await videoEl.play().catch(() => {});
+
+      videoTrack = stream.getVideoTracks()[0];
+
+      let caps = {};
+      try { caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {}; } catch (e) {}
+
+      // 闪光灯
+      state.torchSupported = !!caps.torch;
+      state.torch = false;
+
+      // 变焦范围（锁定主摄 1x 起步）
+      let zMin = 1, zMax = 5, hw = false;
+      if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+        hw = true;
+        zMin = Math.max(1, caps.zoom.min);
+        zMax = caps.zoom.max;
+        if (caps.zoom.min > 1) zMin = caps.zoom.min; // 极端情况：只能接受
+        try {
+          videoTrack.applyConstraints({ advanced: [{ zoom: zMin }] }).catch(() => {});
+        } catch (e) {}
+      }
+      zoomRange = { min: zMin, max: zMax, hw };
+
+      state.zoomT = 0;
+      state.softwareScale = 1;
+      state.displayZoom = zMin;
+
+      buildZoomTicks();
+      buildZoomPills();
+      applyZoom();
+      updateFlashUI();
+      updateVideoTransform();
+
+      state.running = true;
+      permLayer.classList.remove('show');
+
+    } catch (err) {
+      console.error(err);
+      showPermissionError(err);
+    }
+  }
+
+  function showPermissionError(err) {
+    let msg = '无法访问摄像头';
+    if (err && err.name === 'NotAllowedError') msg = '摄像头权限被拒绝，请在浏览器设置中允许访问后重试';
+    else if (err && err.name === 'NotFoundError') msg = '未检测到可用的摄像头设备';
+    else if (err && err.name === 'NotReadableError') msg = '摄像头被其他应用占用，请关闭后重试';
+    else if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+      msg = '请使用 HTTPS 或 localhost 打开本页面';
+    }
+    permMsg.textContent = msg;
+    permLayer.classList.add('show');
+  }
+
+  /* =========================================================
+     非线性变焦
+     ========================================================= */
+  function zoomValueFromT(t) {
+    const { min, max } = zoomRange;
+    return min * Math.pow(max / min, t);
+  }
+  function tFromZoomValue(v) {
+    const { min, max } = zoomRange;
+    if (max <= min) return 0;
+    return Math.log(v / min) / Math.log(max / min);
+  }
+
+  function applyZoom() {
+    const v = zoomValueFromT(state.zoomT);
+    state.displayZoom = v;
+
+    if (zoomRange.hw && videoTrack) {
+      state.softwareScale = 1;
+      try {
+        videoTrack.applyConstraints({ advanced: [{ zoom: v }] }).catch(() => {});
+      } catch (e) {}
+    } else {
+      state.softwareScale = v;
+    }
+
+    updateVideoTransform();
+    updateZoomUI();
+    syncZoomPills();
+  }
+
+  function updateZoomUI() {
+    const v = state.displayZoom;
+    zoomLabel.textContent = (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + '×';
+    zoomThumb.style.bottom = (state.zoomT * 100) + '%';
+  }
+
+  function buildZoomTicks() {
+    zoomTrack.querySelectorAll('.tick').forEach(n => n.remove());
+    const { min, max } = zoomRange;
+    [1, 2, 3, 5, 10].filter(m => m > min * 1.01 && m < max * 0.99).forEach(m => {
+      const el = document.createElement('div');
+      el.className = 'tick';
+      el.style.bottom = (tFromZoomValue(m) * 100) + '%';
+      zoomTrack.appendChild(el);
+    });
+  }
+
+  function buildZoomPills() {
+    zoomPills.innerHTML = '';
+    const { min, max } = zoomRange;
+    const vals = [1, 2, 3, 5, 10].filter(v => v >= min * 0.99 && v <= max * 1.01);
+    if (vals.length === 0) vals.push(min);
+    vals.forEach(v => {
+      const b = document.createElement('button');
+      b.className = 'zoom-pill';
+      b.dataset.zoom = v;
+      b.textContent = (v >= 10 ? v.toFixed(0) : (v % 1 === 0 ? v : v.toFixed(1))) + '×';
+      b.addEventListener('click', () => {
+        if (state.recording) return;
+        state.zoomT = tFromZoomValue(v);
+        applyZoom();
+      });
+      zoomPills.appendChild(b);
+    });
+    syncZoomPills();
+  }
+
+  function syncZoomPills() {
+    const v = state.displayZoom;
+    [...zoomPills.children].forEach(b => {
+      const bv = parseFloat(b.dataset.zoom);
+      b.classList.toggle('active', Math.abs(bv - v) / Math.max(bv, 0.001) < 0.06);
+    });
+  }
+
+  /* 滑轨拖拽 */
+  let zoomDragging = false;
+  function setZoomFromPointer(clientY) {
+    const rect = zoomTrack.getBoundingClientRect();
+    let t = 1 - (clientY - rect.top) / rect.height;
+    t = Math.max(0, Math.min(1, t));
+    state.zoomT = t;
+    applyZoom();
+  }
+  zoomTrack.addEventListener('pointerdown', e => {
+    if (state.recording) return;
+    zoomDragging = true;
+    zoomTrack.setPointerCapture(e.pointerId);
+    setZoomFromPointer(e.clientY);
+    e.preventDefault();
+  });
+  zoomTrack.addEventListener('pointermove', e => {
+    if (zoomDragging) setZoomFromPointer(e.clientY);
+  });
+  zoomTrack.addEventListener('pointerup', e => {
+    zoomDragging = false;
+    try { zoomTrack.releasePointerCapture(e.pointerId); } catch (err) {}
+  });
+  zoomTrack.addEventListener('pointercancel', () => { zoomDragging = false; });
+
+  /* 双指捏合 */
+  const pointers = new Map();
+  let pinchStartDist = 0, pinchStartT = 0;
+  const stage = document.getElementById('stage');
+
+  stage.addEventListener('pointerdown', e => {
+    if (state.recording) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y);
+      pinchStartT = state.zoomT;
+    }
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2 && pinchStartDist > 0 && !state.recording) {
+      const [a, b] = [...pointers.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const delta = Math.log(dist / pinchStartDist) / Math.log(zoomRange.max / zoomRange.min);
+      state.zoomT = Math.max(0, Math.min(1, pinchStartT + delta));
+      applyZoom();
+      e.preventDefault();
+    }
+  });
+  const clearPointer = e => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStartDist = 0;
+  };
+  stage.addEventListener('pointerup', clearPointer);
+  stage.addEventListener('pointercancel', clearPointer);
+
+  /* =========================================================
+     画面变换
+     ========================================================= */
+  function updateVideoTransform() {
+    const margin = state.eis ? 1.08 : 1.0;
+    const s = state.softwareScale * margin;
+    const mir = (state.facing === 'user' && state.mirror) ? ' scaleX(-1)' : '';
+    videoEl.style.transform =
+      `translate(${state.eisDx.toFixed(2)}px, ${state.eisDy.toFixed(2)}px) ` +
+      `scale(${s.toFixed(4)})${mir}`;
+  }
+
+  /* =========================================================
+     电子防抖 EIS
+     ========================================================= */
+  const SW = 72, SH = 54;
+  const sampleCv = document.createElement('canvas');
+  sampleCv.width = SW; sampleCv.height = SH;
+  const sampleCtx = sampleCv.getContext('2d', { willReadFrequently: true });
+
+  let prevGray = null;
+  let grayBuf = null;
+  let trailX = 0, trailY = 0;
+  let smoothX = 0, smoothY = 0;
+  let motionFrame = 0;
+
+  function resetEIS() {
+    prevGray = null;
+    trailX = trailY = smoothX = smoothY = 0;
+    state.eisDx = 0;
+    state.eisDy = 0;
+  }
+
+  function motionLoop() {
+    requestAnimationFrame(motionLoop);
+    if (!state.running) return;
+
+    if (state.eis && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
+      motionFrame++;
+      if (motionFrame % 2 === 0) updateEIS();
+    } else if (!state.eis) {
+      if (Math.abs(state.eisDx) > 0.05 || Math.abs(state.eisDy) > 0.05) {
+        state.eisDx *= 0.78;
+        state.eisDy *= 0.78;
+        updateVideoTransform();
+      }
+    }
+  }
+
+  function updateEIS() {
+    try {
+      sampleCtx.drawImage(videoEl, 0, 0, SW, SH);
+    } catch (e) { return; }
+
+    let data;
+    try {
+      data = sampleCtx.getImageData(0, 0, SW, SH).data;
+    } catch (e) { return; }
+
+    const n = SW * SH;
+    if (!grayBuf) grayBuf = new Float32Array(n);
+    const g = grayBuf;
+
+    for (let i = 0, j = 0; i < n; i++, j += 4) {
+      g[i] = data[j] * 0.299 + data[j + 1] * 0.587 + data[j + 2] * 0.114;
+    }
+
+    if (prevGray) {
+      let gx2 = 0, gxit = 0, gy2 = 0, gyit = 0;
+      for (let y = 1; y < SH - 1; y++) {
+        const row = y * SW;
+        for (let x = 1; x < SW - 1; x++) {
+          const i = row + x;
+          const gx = (g[i + 1] - g[i - 1]) * 0.5;
+          const gy = (g[i + SW] - g[i - SW]) * 0.5;
+          const it = g[i] - prevGray[i];
+          gx2 += gx * gx; gxit += gx * it;
+          gy2 += gy * gy; gyit += gy * it;
+        }
+      }
+
+      let dx = gx2 > 1 ? -gxit / gx2 : 0;
+      let dy = gy2 > 1 ? -gyit / gy2 : 0;
+      dx = Math.max(-1.5, Math.min(1.5, dx));
+      dy = Math.max(-1.5, Math.min(1.5, dy));
+      if (Math.abs(dx) < 0.02) dx = 0;
+      if (Math.abs(dy) < 0.02) dy = 0;
+
+      trailX += dx; trailY += dy;
+      smoothX += (trailX - smoothX) * 0.10;
+      smoothY += (trailY - smoothY) * 0.10;
+
+      const kx = innerWidth / SW;
+      const ky = innerHeight / SH;
+
+      let ox = -(trailX - smoothX) * kx * 0.75;
+      let oy = -(trailY - smoothY) * ky * 0.75;
+
+      const limX = innerWidth * 0.038;
+      const limY = innerHeight * 0.038;
+      ox = Math.max(-limX, Math.min(limX, ox));
+      oy = Math.max(-limY, Math.min(limY, oy));
+
+      state.eisDx += (ox - state.eisDx) * 0.45;
+      state.eisDy += (oy - state.eisDy) * 0.45;
+
+      updateVideoTransform();
+
+      trailX *= 0.985; smoothX *= 0.985;
+      trailY *= 0.985; smoothY *= 0.985;
+    }
+
+    if (!prevGray) prevGray = new Float32Array(n);
+    prevGray.set(g);
+  }
+
+  /* =========================================================
+     闪光灯
+     ========================================================= */
+  function updateFlashUI() {
+    if (!state.torchSupported) {
+      flashBtn.classList.add('disabled');
+      flashBtn.classList.remove('on');
+      return;
+    }
+    flashBtn.classList.remove('disabled');
+    flashBtn.classList.toggle('on', state.torch);
+  }
+
+  async function toggleTorch() {
+    if (!state.torchSupported || !videoTrack || state.recording) return;
+    const next = !state.torch;
+    try {
+      await videoTrack.applyConstraints({ advanced: [{ torch: next }] });
+      state.torch = next;
+    } catch (e) {
+      state.torchSupported = false;
+    }
+    updateFlashUI();
+  }
+
+  /* =========================================================
+     统一帧渲染（拍照 + 录像）
+     ========================================================= */
+  function renderFrame(ctx, W, H) {
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    if (!vw || !vh) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
+
+    const targetAR = W / H;
+    const margin = state.eis ? 1.08 : 1.0;
+    const scale = state.softwareScale * margin;
+
+    let cw, ch;
+    if (vw / vh > targetAR) { ch = vh; cw = vh * targetAR; }
+    else { cw = vw; ch = vw / targetAR; }
+    cw /= scale; ch /= scale;
+
+    const cx = (vw - cw) / 2;
+    const cy = (vh - ch) / 2;
+
+    const mirrored = (state.facing === 'user' && state.mirror);
+    let dx = state.eisDx * (W / Math.max(1, innerWidth));
+    const dy = state.eisDy * (H / Math.max(1, innerHeight));
+    if (mirrored) dx = -dx;
+
+    ctx.save();
+    if (mirrored) {
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
+    }
+    const f = FILTERS[state.filterIndex].css;
+    if (f !== 'none') {
+      try { ctx.filter = f; } catch (e) {}
+    }
+    ctx.drawImage(videoEl, cx, cy, cw, ch, dx, dy, W, H);
+    try { ctx.filter = 'none'; } catch (e) {}
+    ctx.restore();
+
+    // 暗角
+    const g = ctx.createRadialGradient(
+      W / 2, H / 2, Math.min(W, H) * 0.36,
+      W / 2, H / 2, Math.max(W, H) * 0.72
+    );
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.30)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  /* =========================================================
+     拍照
+     ========================================================= */
+  function capturePhoto() {
+    if (!state.running) return;
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    if (!vw || !vh) return;
+
+    const ar = innerWidth / innerHeight;
+    const long = 2560;
+    let W, H;
+    if (ar >= 1) { W = long; H = Math.round(long / ar); }
+    else { H = long; W = Math.round(long * ar); }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    renderFrame(ctx, W, H);
+
+    // 快门反馈
+    flashFx.classList.add('fire');
+    requestAnimationFrame(() => requestAnimationFrame(() => flashFx.classList.remove('fire')));
+    if (navigator.vibrate) navigator.vibrate(16);
+    playShutter();
+
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      if (currentPhotoURL) URL.revokeObjectURL(currentPhotoURL);
+      currentPhotoURL = URL.createObjectURL(blob);
+      lastMedia = { type: 'photo', url: currentPhotoURL, blob };
+
+      thumbBtn.style.backgroundImage = `url(${currentPhotoURL})`;
+      thumbBtn.querySelector('svg').style.opacity = '0';
+
+      openViewer('photo', currentPhotoURL, blob);
+    }, 'image/jpeg', 0.94);
+  }
+
+  /* =========================================================
+     录像
+     ========================================================= */
+  function pickMimeType() {
+    const list = [
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm'
+    ];
+    for (const m of list) {
+      try { if (MediaRecorder.isTypeSupported(m)) return m; } catch (e) {}
+    }
+    return '';
+  }
+
+  async function startRecording() {
+    if (state.recording || !stream || !state.running) return;
+    if (!canRecord) { alert('当前浏览器不支持视频录制'); return; }
+
+    const ar = innerWidth / innerHeight;
+    const long = 1280;
+    let W, H;
+    if (ar >= 1) { W = long; H = Math.round(long / ar); }
+    else { H = long; W = Math.round(long * ar); }
+    W = Math.round(W / 2) * 2;
+    H = Math.round(H / 2) * 2;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    state.recCanvas = canvas;
+    state.recCtx = ctx;
+    state.recording = true;
+
+    // 渲染循环
+    const draw = () => {
+      if (!state.recording) return;
+      renderFrame(ctx, W, H);
+      state.recRaf = requestAnimationFrame(draw);
+    };
+    draw();
+
+    // 先播放开始提示音，再打开麦克风，避免录入
+    playRecStart();
+
+    const canvasStream = canvas.captureStream(30);
+    const tracks = [...canvasStream.getVideoTracks()];
+
+    if (state.mic) {
+      try {
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStream.getAudioTracks().forEach(t => tracks.push(t));
+      } catch (e) {
+        audioStream = null;
+      }
+    }
+
+    const outStream = new MediaStream(tracks);
+    const mime = pickMimeType();
+    recordedChunks = [];
+
+    try {
+      recorder = new MediaRecorder(outStream, mime
+        ? { mimeType: mime, videoBitsPerSecond: 6000000 }
+        : undefined);
+    } catch (e) {
+      try { recorder = new MediaRecorder(outStream); }
+      catch (e2) {
+        state.recording = false;
+        cancelAnimationFrame(state.recRaf);
+        cleanupRecordingTracks();
+        return;
+      }
+    }
+
+    recorder.ondataavailable = e => {
+      if (e.data && e.data.size) recordedChunks.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      const type = recorder.mimeType || mime || 'video/webm';
+      const blob = new Blob(recordedChunks, { type });
+      recordedChunks = [];
+      cleanupRecordingTracks();
+      if (!blob.size) return;
+
+      const url = URL.createObjectURL(blob);
+      lastMedia = { type: 'video', url, blob };
+      makeVideoThumbnail(url);
+      openViewer('video', url, blob);
+    };
+
+    try {
+      recorder.start(1000);
+    } catch (e) {
+      state.recording = false;
+      cancelAnimationFrame(state.recRaf);
+      cleanupRecordingTracks();
+      return;
+    }
+
+    startRecordTimer();
+    updateShutterMode();
+  }
+
+  function cleanupRecordingTracks() {
+    if (audioStream) {
+      audioStream.getTracks().forEach(t => t.stop());
+      audioStream = null;
+    }
+    state.recCanvas = null;
+    state.recCtx = null;
+  }
+
+  function stopRecording() {
+    if (!state.recording) return;
+    state.recording = false;
+    cancelAnimationFrame(state.recRaf);
+    stopRecordTimer();
+    playRecStop();
+
+    if (audioStream) {
+      audioStream.getTracks().forEach(t => t.stop());
+      audioStream = null;
+    }
+    try {
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+    } catch (e) {}
+    updateShutterMode();
+  }
+
+  function startRecordTimer() {
+    state.recStart = Date.now();
+    recordBadge.classList.add('show');
+    updateRecTime();
+    state.recTimer = setInterval(updateRecTime, 250);
+  }
+  function updateRecTime() {
+    const s = Math.floor((Date.now() - state.recStart) / 1000);
+    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    recTime.textContent = `${mm}:${ss}`;
+  }
+  function stopRecordTimer() {
+    clearInterval(state.recTimer);
+    recordBadge.classList.remove('show');
+    recTime.textContent = '00:00';
+  }
+
+  function makeVideoThumbnail(url) {
+    const v = document.createElement('video');
+    v.src = url;
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.addEventListener('loadeddata', () => {
+      try { v.currentTime = Math.min(0.15, (v.duration || 0.2) * 0.5); } catch (e) {}
+    });
+    v.addEventListener('seeked', () => {
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 128;
+      const ctx = c.getContext('2d');
+      const s = Math.min(v.videoWidth || 1, v.videoHeight || 1);
+      ctx.drawImage(
+        v,
+        ((v.videoWidth || s) - s) / 2, ((v.videoHeight || s) - s) / 2,
+        s, s, 0, 0, 128, 128
+      );
+      thumbBtn.style.backgroundImage = `url(${c.toDataURL('image/jpeg', 0.82)})`;
+      thumbBtn.querySelector('svg').style.opacity = '0';
+    });
+  }
+
+  function updateShutterMode() {
+    shutterBtn.classList.toggle('video-mode', state.mode === 'video');
+    shutterBtn.classList.toggle('recording', state.recording);
+  }
+
+  /* =========================================================
+     查看器
+     ========================================================= */
+  function openViewer(type, url, blob) {
+    if (type === 'photo') {
+      videoPlayer.pause();
+      videoPlayer.removeAttribute('src');
+      videoPlayer.style.display = 'none';
+      photoImg.style.display = 'block';
+      photoImg.src = url;
+      downloadLink.href = url;
+      downloadLink.download = `LiquidCam_${Date.now()}.jpg`;
+    } else {
+      photoImg.style.display = 'none';
+      videoPlayer.style.display = 'block';
+      videoPlayer.src = url;
+      downloadLink.href = url;
+      const ext = (blob && /mp4/.test(blob.type)) ? 'mp4' : 'webm';
+      downloadLink.download = `LiquidCam_${Date.now()}.${ext}`;
+    }
+    mediaViewer.classList.add('show');
+  }
+
+  function closeViewerFn() {
+    mediaViewer.classList.remove('show');
+    try {
+      videoPlayer.pause();
+      videoPlayer.removeAttribute('src');
+      videoPlayer.load();
+    } catch (e) {}
+  }
+
+  /* =========================================================
+     事件绑定
+     ========================================================= */
+  // 快门
+  shutterBtn.addEventListener('click', () => {
+    ac(); // 解锁音频上下文
+    if (state.mode === 'photo') {
+      capturePhoto();
+    } else {
+      if (state.recording) stopRecording();
+      else startRecording();
+    }
+  });
+
+  // 闪光灯
+  flashBtn.addEventListener('click', toggleTorch);
+
+  // 切换镜头
+  switchBtn.addEventListener('click', async () => {
+    if (state.recording) return;
+    state.facing = state.facing === 'environment' ? 'user' : 'environment';
+    state.torch = false;
+    await startCamera(state.facing);
+    updateFlashUI();
+  });
+
+  // 模式切换
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (state.recording) return;
+      const mode = btn.dataset.mode;
+      if (mode === 'video' && !canRecord) return;
+      state.mode = mode;
+      document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
+      updateShutterMode();
+      ac();
+    });
+  });
+  if (!canRecord) {
+    const vb = document.querySelector('.mode-btn[data-mode="video"]');
+    if (vb) vb.classList.add('disabled');
+  }
+
+  // 滤镜条
+  FILTERS.forEach((f, i) => {
+    const chip = document.createElement('button');
+    chip.className = 'filter-chip' + (i === 0 ? ' active' : '');
+    chip.textContent = f.name;
+    chip.addEventListener('click', () => {
+      state.filterIndex = i;
+      [...filterStrip.children].forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      videoEl.style.filter = f.css === 'none' ? '' : f.css;
+      chip.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    });
+    filterStrip.appendChild(chip);
+  });
+
+  // 设置
+  function openSettings() {
+    settingsPanel.classList.add('show');
+    settingsOverlay.classList.add('show');
+  }
+  function closeSettings() {
+    settingsPanel.classList.remove('show');
+    settingsOverlay.classList.remove('show');
+  }
+  settingsBtn.addEventListener('click', openSettings);
+  settingsOverlay.addEventListener('click', closeSettings);
+
+  eisToggle.addEventListener('change', () => {
+    state.eis = eisToggle.checked;
+    if (!state.eis) resetEIS();
+    updateVideoTransform();
+  });
+  gridToggle.addEventListener('change', () => {
+    gridEl.classList.toggle('on', gridToggle.checked);
+  });
+  mirrorToggle.addEventListener('change', () => {
+    state.mirror = mirrorToggle.checked;
+    updateVideoTransform();
+  });
+  micToggle.addEventListener('change', () => {
+    state.mic = micToggle.checked;
+  });
+  soundToggle.addEventListener('change', () => {
+    state.sound = soundToggle.checked;
+    if (state.sound) ac();
+  });
+
+  // 查看器
+  closeViewer.addEventListener('click', closeViewerFn);
+  mediaViewer.addEventListener('click', e => {
+    if (e.target === mediaViewer) closeViewerFn();
+  });
+  thumbBtn.addEventListener('click', () => {
+    if (lastMedia) openViewer(lastMedia.type, lastMedia.url, lastMedia.blob);
+  });
+
+  // 权限重试
+  retryBtn.addEventListener('click', () => startCamera(state.facing));
+
+  // 页面切后台
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (state.recording) stopRecording();
+      state.running = false;
+    } else if (stream) {
+      state.running = true;
+      videoEl.play().catch(() => {});
+    }
+  });
+
+  /* =========================================================
+     初始化：直接进入相机预览
+     ========================================================= */
+  requestAnimationFrame(motionLoop);
+  updateVideoTransform();
+  updateZoomUI();
+  updateShutterMode();
+
+  // 页面一加载就请求摄像头
+  startCamera(state.facing);
+
+})();
+</script>
+</body>
+</html>
